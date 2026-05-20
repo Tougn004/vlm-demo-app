@@ -5,7 +5,7 @@ import os
 import threading
 import time
 from collections import deque
-from typing import Deque, Dict, List
+from typing import Deque, Dict, List, Optional
 
 import cv2
 import httpx
@@ -15,6 +15,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://127.0.0.1:11434/api/generate")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "gemma3:4b")
 CAMERA_INDEX = int(os.getenv("CAMERA_INDEX", "0"))
+FALLBACK_CAMERA_INDEXES = [int(x) for x in os.getenv("FALLBACK_CAMERA_INDEXES", "1").split(",") if x.strip()]
 CHECK_INTERVAL_SECONDS = float(os.getenv("CHECK_INTERVAL_SECONDS", "5"))
 
 app = FastAPI(title="VLM Person Alert")
@@ -27,6 +28,8 @@ status: Dict[str, object] = {
 }
 
 event_queue: Deque[Dict[str, object]] = deque(maxlen=200)
+latest_jpeg: Optional[bytes] = None
+frame_lock = threading.Lock()
 
 
 def push_event(event_type: str, payload: Dict[str, object]) -> None:
@@ -40,43 +43,59 @@ def push_event(event_type: str, payload: Dict[str, object]) -> None:
     )
 
 
-def capture_frame(camera_index: int) -> bytes:
-    cap = cv2.VideoCapture(camera_index)
-    if not cap.isOpened():
-        raise RuntimeError(f"Could not open camera index {camera_index}")
+def camera_capture_loop() -> None:
+    global latest_jpeg
+    indexes = [CAMERA_INDEX] + [idx for idx in FALLBACK_CAMERA_INDEXES if idx != CAMERA_INDEX]
+    while status.get("running", True):
+        cap = None
+        chosen_index = None
+        for idx in indexes:
+            test_cap = cv2.VideoCapture(idx)
+            if test_cap.isOpened():
+                cap = test_cap
+                chosen_index = idx
+                break
+            test_cap.release()
 
-    ok, frame = cap.read()
-    cap.release()
-    if not ok or frame is None:
-        raise RuntimeError("Failed to read frame from camera")
+        if cap is None:
+            status["error"] = f"Could not open camera indexes: {indexes}"
+            push_event("error", {"message": status["error"]})
+            time.sleep(2)
+            continue
 
-    ok, buffer = cv2.imencode(".jpg", frame)
-    if not ok:
-        raise RuntimeError("Failed to encode frame as JPEG")
-    return buffer.tobytes()
+        status["camera_index"] = chosen_index
+        status["error"] = None
+
+        try:
+            while status.get("running", True):
+                ok, frame = cap.read()
+                if not ok or frame is None:
+                    status["error"] = f"Camera read failed on index {chosen_index}, retrying"
+                    push_event("error", {"message": status["error"]})
+                    break
+                ok, buffer = cv2.imencode(".jpg", frame)
+                if not ok:
+                    continue
+                with frame_lock:
+                    latest_jpeg = buffer.tobytes()
+        finally:
+            cap.release()
+            time.sleep(0.2)
 
 
 def mjpeg_frame_generator():
-    cap = cv2.VideoCapture(CAMERA_INDEX)
-    if not cap.isOpened():
-        raise RuntimeError(f"Could not open camera index {CAMERA_INDEX}")
-    try:
-        while True:
-            ok, frame = cap.read()
-            if not ok or frame is None:
-                time.sleep(0.05)
-                continue
-            ok, buffer = cv2.imencode(".jpg", frame)
-            if not ok:
-                continue
-            jpg_bytes = buffer.tobytes()
-            yield (
-                b"--frame\r\n"
-                b"Content-Type: image/jpeg\r\n\r\n" + jpg_bytes + b"\r\n"
-            )
-            time.sleep(0.06)
-    finally:
-        cap.release()
+    while status.get("running", True):
+        frame = None
+        with frame_lock:
+            frame = latest_jpeg
+        if frame is None:
+            time.sleep(0.05)
+            continue
+        yield (
+            b"--frame\r\n"
+            b"Content-Type: image/jpeg\r\n\r\n" + frame + b"\r\n"
+        )
+        time.sleep(0.06)
 
 
 def ask_vlm_person_present(jpeg_bytes: bytes) -> Dict[str, object]:
@@ -114,7 +133,12 @@ def ask_vlm_person_present(jpeg_bytes: bytes) -> Dict[str, object]:
 def detection_loop() -> None:
     while status.get("running", True):
         try:
-            jpeg = capture_frame(CAMERA_INDEX)
+            with frame_lock:
+                jpeg = latest_jpeg
+            if jpeg is None:
+                status["error"] = "Waiting for first camera frame"
+                time.sleep(0.2)
+                continue
             result = ask_vlm_person_present(jpeg)
             status["last_check"] = time.strftime("%Y-%m-%d %H:%M:%S")
             status["last_result"] = result
@@ -132,6 +156,8 @@ def detection_loop() -> None:
 
 @app.on_event("startup")
 async def startup_event() -> None:
+    camera_thread = threading.Thread(target=camera_capture_loop, daemon=True)
+    camera_thread.start()
     thread = threading.Thread(target=detection_loop, daemon=True)
     thread.start()
 
