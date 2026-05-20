@@ -56,6 +56,16 @@
         border-color: rgba(245, 158, 11, 0.6);
         color: #fde68a;
       }
+      .last-error-box {
+        border-radius: 10px;
+        padding: 10px 12px;
+        margin: 10px 0 12px 0;
+        border: 1px solid rgba(245, 158, 11, 0.6);
+        background: rgba(245, 158, 11, 0.22);
+        color: #fde68a;
+        font-weight: 600;
+        display: none;
+      }
       .camera {
         width: 100%;
         border-radius: 10px;
@@ -101,8 +111,8 @@
 
       <div class="card">
         <p>Status: <span id="status-pill" class="pill">starting...</span></p>
-        <p id="status-text" class="muted">Waiting for first detection...</p>
         <button id="notif-btn">Enable Browser Notifications</button>
+        <div id="last-error-box" class="last-error-box"></div>
         <div class="top-grid">
           <div>
             <img class="camera" id="camera-feed" src="/camera" alt="Live webcam feed" />
@@ -129,7 +139,7 @@
       const eventsDiv = document.getElementById('events');
       const alertsDiv = document.getElementById('alerts');
       const statusPill = document.getElementById('status-pill');
-      const statusText = document.getElementById('status-text');
+      const lastErrorBox = document.getElementById('last-error-box');
       const notifBtn = document.getElementById('notif-btn');
       const promptBox = document.getElementById('prompt-box');
       const savePromptBtn = document.getElementById('save-prompt-btn');
@@ -154,17 +164,28 @@
         alertsDiv.prepend(div);
       }
 
-      function updateStatus(healthy, message) {
+      function updateStatus(healthy) {
         statusPill.textContent = healthy ? 'running' : 'error';
         statusPill.className = 'pill ' + (healthy ? 'ok' : 'bad');
-        statusText.textContent = message;
+      }
+
+      function setLastError(message) {
+        if (!message) {
+          lastErrorBox.style.display = 'none';
+          lastErrorBox.textContent = '';
+          return;
+        }
+        lastErrorBox.style.display = 'block';
+        lastErrorBox.textContent = `Last Error: ${message}`;
       }
 
       fetch('/status').then(r => r.json()).then(s => {
         if (s.error) {
-          updateStatus(false, s.error);
+          updateStatus(false);
+          setLastError(s.error);
         } else {
-          updateStatus(true, 'Monitoring webcam...');
+          updateStatus(true);
+          setLastError('');
         }
       });
       fetch('/config/prompt')
@@ -194,7 +215,8 @@
         const p = e.payload;
         const txt = `[${e.ts}] Detection: person_detected=${p.person_detected} confidence=${p.confidence} summary=${p.summary}`;
         addEvent(txt);
-        updateStatus(true, txt);
+        updateStatus(true);
+        setLastError('');
       });
 
       source.addEventListener('alert', (evt) => {
@@ -213,7 +235,8 @@
         const txt = `[${e.ts}] ERROR: ${e.payload.message}`;
         addEvent(txt);
         addAlert(txt, 'error');
-        updateStatus(false, e.payload.message);
+        updateStatus(false);
+        setLastError(e.payload.message);
       });
     </script>
   </body>
