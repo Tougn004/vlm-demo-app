@@ -135,7 +135,7 @@
       <p class="muted">Reads USB webcam frames, queries local Ollama vision model, and triggers browser alerts when a person is detected.</p>
 
       <div class="card">
-        <p>Status: <span id="status-pill" class="pill">starting...</span><span id="mode-pill" class="pill mode">mode:auto</span></p>
+        <p>Status: <span id="status-pill" class="pill">starting...</span><span id="mode-pill" class="pill mode">mode:auto</span><span id="visionary-pill" class="pill mode">visionary:rgb</span></p>
         <button id="notif-btn">Enable Browser Notifications</button>
         <div id="last-vlm-box" class="last-vlm-box">Last VLM Message: Waiting for first detection...</div>
         <div class="top-grid">
@@ -157,6 +157,14 @@
                 <option value="activity">Activity</option>
               </select>
               <span id="mode-save-status" class="muted"></span>
+            </p>
+            <p>
+              <label class="muted" for="visionary-select">Visionary:</label>
+              <select id="visionary-select">
+                <option value="rgb">RGB</option>
+                <option value="inferred">Inferred (Placeholder)</option>
+              </select>
+              <span id="visionary-save-status" class="muted"></span>
             </p>
             <textarea id="prompt-box"></textarea>
             <p class="prompt-row">
@@ -194,6 +202,7 @@
       const alertsDiv = document.getElementById('alerts');
       const statusPill = document.getElementById('status-pill');
       const modePill = document.getElementById('mode-pill');
+      const visionaryPill = document.getElementById('visionary-pill');
       const lastVlmBox = document.getElementById('last-vlm-box');
       const notifBtn = document.getElementById('notif-btn');
       const promptBox = document.getElementById('prompt-box');
@@ -205,6 +214,8 @@
       const presetSelect = document.getElementById('preset-select');
       const modeSelect = document.getElementById('mode-select');
       const modeSaveStatus = document.getElementById('mode-save-status');
+      const visionarySelect = document.getElementById('visionary-select');
+      const visionarySaveStatus = document.getElementById('visionary-save-status');
       const recentCounts = [];
 
       const promptPresets = {
@@ -267,11 +278,16 @@
           updateStatus(true);
         }
         modePill.textContent = `mode:${s.mode || 'auto'}`;
+        visionaryPill.textContent = `visionary:${s.visionary_mode || 'rgb'}`;
       });
       fetch('/config/mode')
         .then(r => r.json())
         .then(cfg => { modeSelect.value = cfg.mode || 'auto'; })
         .catch(() => { modeSaveStatus.textContent = 'Failed to load mode'; });
+      fetch('/config/visionary')
+        .then(r => r.json())
+        .then(cfg => { visionarySelect.value = cfg.visionary || 'rgb'; })
+        .catch(() => { visionarySaveStatus.textContent = 'Failed to load visionary'; });
       fetch('/camera/diagnostics')
         .then(r => r.json())
         .then(d => {
@@ -309,6 +325,22 @@
         modeSaveStatus.textContent = `Saved (${body.mode})`;
       };
 
+      visionarySelect.onchange = async () => {
+        visionarySaveStatus.textContent = 'Saving...';
+        const response = await fetch('/config/visionary', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ visionary: visionarySelect.value })
+        });
+        const body = await response.json();
+        if (!response.ok || !body.ok) {
+          visionarySaveStatus.textContent = body.error || 'Failed to save visionary';
+          return;
+        }
+        visionarySaveStatus.textContent = `Saved (${body.visionary})`;
+        visionaryPill.textContent = `visionary:${body.visionary}`;
+      };
+
       savePromptBtn.onclick = async () => {
         promptSaveStatus.textContent = 'Saving...';
         const response = await fetch('/config/prompt', {
@@ -336,6 +368,9 @@
         updateTrend(Number(p.count ?? (p.person_detected ? 1 : 0)));
         updateStatus(true);
         modePill.textContent = `mode:${p.mode || 'auto'}`;
+        if (visionarySelect && visionarySelect.value) {
+          visionaryPill.textContent = `visionary:${visionarySelect.value}`;
+        }
         setLastVlmMessage(p.raw_response || summary || txt);
       });
 
