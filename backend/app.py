@@ -202,6 +202,20 @@ def discover_camera_device_paths() -> List[str]:
     return sorted(glob.glob("/dev/video*"))
 
 
+def open_camera_for_index(idx: int):
+    device_path = f"/dev/video{idx}"
+    # Prefer explicit V4L2 device path on Linux for stability.
+    cap = cv2.VideoCapture(device_path, cv2.CAP_V4L2)
+    if not cap.isOpened():
+        cap.release()
+        # Fallback to numeric index if path open fails.
+        cap = cv2.VideoCapture(idx, cv2.CAP_V4L2)
+    if cap.isOpened():
+        # Keep buffer depth low to reduce latency and stale frames.
+        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+    return cap
+
+
 def save_snapshot(jpeg_bytes: bytes) -> str:
     filename = f"alert_{int(time.time())}.jpg"
     filepath = SNAPSHOT_DIR / filename
@@ -224,12 +238,13 @@ def send_webhook_alert(result: Dict[str, object], snapshot_path: str) -> None:
 
 def camera_capture_loop() -> None:
     global latest_jpeg, last_camera_error
+    reopen_delay = 1.0
     while status.get("running", True):
         indexes = discover_camera_indexes()
         cap = None
         chosen_index = None
         for idx in indexes:
-            test_cap = cv2.VideoCapture(idx)
+            test_cap = open_camera_for_index(idx)
             if test_cap.isOpened():
                 cap = test_cap
                 chosen_index = idx
@@ -242,12 +257,14 @@ def camera_capture_loop() -> None:
             if last_camera_error != msg:
                 push_event("error", {"message": msg})
                 last_camera_error = msg
-            time.sleep(2)
+            time.sleep(reopen_delay)
+            reopen_delay = min(5.0, reopen_delay + 0.5)
             continue
 
         status["camera_index"] = chosen_index
         status["error"] = None
         last_camera_error = None
+        reopen_delay = 1.0
 
         try:
             while status.get("running", True):
