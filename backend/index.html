@@ -56,15 +56,15 @@
         border-color: rgba(245, 158, 11, 0.6);
         color: #fde68a;
       }
-      .last-error-box {
+      .last-vlm-box {
         border-radius: 10px;
         padding: 10px 12px;
         margin: 10px 0 12px 0;
-        border: 1px solid rgba(245, 158, 11, 0.6);
-        background: rgba(245, 158, 11, 0.22);
-        color: #fde68a;
+        border: 1px solid rgba(14, 165, 233, 0.55);
+        background: rgba(14, 165, 233, 0.18);
+        color: #bae6fd;
         font-weight: 600;
-        display: none;
+        display: block;
       }
       .camera {
         width: 100%;
@@ -112,7 +112,7 @@
       <div class="card">
         <p>Status: <span id="status-pill" class="pill">starting...</span></p>
         <button id="notif-btn">Enable Browser Notifications</button>
-        <div id="last-error-box" class="last-error-box"></div>
+        <div id="last-vlm-box" class="last-vlm-box">Last VLM Message: Waiting for first detection...</div>
         <div class="top-grid">
           <div>
             <img class="camera" id="camera-feed" src="/camera" alt="Live webcam feed" />
@@ -139,7 +139,7 @@
       const eventsDiv = document.getElementById('events');
       const alertsDiv = document.getElementById('alerts');
       const statusPill = document.getElementById('status-pill');
-      const lastErrorBox = document.getElementById('last-error-box');
+      const lastVlmBox = document.getElementById('last-vlm-box');
       const notifBtn = document.getElementById('notif-btn');
       const promptBox = document.getElementById('prompt-box');
       const savePromptBtn = document.getElementById('save-prompt-btn');
@@ -169,23 +169,18 @@
         statusPill.className = 'pill ' + (healthy ? 'ok' : 'bad');
       }
 
-      function setLastError(message) {
-        if (!message) {
-          lastErrorBox.style.display = 'none';
-          lastErrorBox.textContent = '';
-          return;
-        }
-        lastErrorBox.style.display = 'block';
-        lastErrorBox.textContent = `Last Error: ${message}`;
+      function setLastVlmMessage(message) {
+        const text = message && message.trim().length
+          ? message
+          : 'Waiting for first detection...';
+        lastVlmBox.textContent = `Last VLM Message: ${text}`;
       }
 
       fetch('/status').then(r => r.json()).then(s => {
         if (s.error) {
           updateStatus(false);
-          setLastError(s.error);
         } else {
           updateStatus(true);
-          setLastError('');
         }
       });
       fetch('/config/prompt')
@@ -213,10 +208,12 @@
       source.addEventListener('detection', (evt) => {
         const e = JSON.parse(evt.data);
         const p = e.payload;
-        const txt = `[${e.ts}] Detection: person_detected=${p.person_detected} confidence=${p.confidence} summary=${p.summary}`;
+        const summary = p.summary || '';
+        const countText = (p.count !== undefined && p.count !== null) ? ` count=${p.count}` : '';
+        const txt = `[${e.ts}] Detection: person_detected=${p.person_detected} confidence=${p.confidence}${countText} summary=${summary}`;
         addEvent(txt);
         updateStatus(true);
-        setLastError('');
+        setLastVlmMessage(p.raw_response || summary || txt);
       });
 
       source.addEventListener('alert', (evt) => {
@@ -236,7 +233,6 @@
         addEvent(txt);
         addAlert(txt, 'error');
         updateStatus(false);
-        setLastError(e.payload.message);
       });
     </script>
   </body>

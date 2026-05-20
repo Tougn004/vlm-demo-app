@@ -1,4 +1,5 @@
 import asyncio
+import ast
 import base64
 import glob
 import json
@@ -77,9 +78,16 @@ def normalize_model_response(raw_response: str) -> Dict[str, object]:
             try:
                 parsed_obj = json.loads(candidate)
             except Exception:
-                parsed_obj = raw
+                try:
+                    # Accept Python-style dict output with single quotes/trailing commas.
+                    parsed_obj = ast.literal_eval(candidate)
+                except Exception:
+                    parsed_obj = raw
         else:
-            parsed_obj = raw
+            try:
+                parsed_obj = ast.literal_eval(raw)
+            except Exception:
+                parsed_obj = raw
 
     # If the model returns a bare numeric JSON value or plain numeric text.
     if isinstance(parsed_obj, int) or (isinstance(parsed_obj, str) and parsed_obj.strip().isdigit()):
