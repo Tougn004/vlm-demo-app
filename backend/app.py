@@ -10,6 +10,7 @@ from typing import Deque, Dict, List, Optional
 import cv2
 import httpx
 from fastapi import FastAPI
+from pydantic import BaseModel
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://127.0.0.1:11434/api/generate")
@@ -30,6 +31,18 @@ status: Dict[str, object] = {
 event_queue: Deque[Dict[str, object]] = deque(maxlen=200)
 latest_jpeg: Optional[bytes] = None
 frame_lock = threading.Lock()
+prompt_lock = threading.Lock()
+
+DEFAULT_SYSTEM_PROMPT = (
+    "You are a strict vision classifier. "
+    "Answer ONLY valid JSON with fields: person_detected (boolean), confidence (0-1 number), summary (string). "
+    "Detect if at least one person is visible in this image."
+)
+current_system_prompt = DEFAULT_SYSTEM_PROMPT
+
+
+class PromptConfig(BaseModel):
+    system_prompt: str
 
 
 def push_event(event_type: str, payload: Dict[str, object]) -> None:
@@ -99,11 +112,8 @@ def mjpeg_frame_generator():
 
 
 def ask_vlm_person_present(jpeg_bytes: bytes) -> Dict[str, object]:
-    prompt = (
-        "You are a strict vision classifier. "
-        "Answer ONLY valid JSON with fields: person_detected (boolean), confidence (0-1 number), summary (string). "
-        "Detect if at least one person is visible in this image."
-    )
+    with prompt_lock:
+        prompt = current_system_prompt
     image_b64 = base64.b64encode(jpeg_bytes).decode("utf-8")
 
     payload = {
@@ -188,6 +198,24 @@ async def events() -> StreamingResponse:
             await asyncio.sleep(1)
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+
+@app.get("/config/prompt")
+def get_prompt_config() -> JSONResponse:
+    with prompt_lock:
+        return JSONResponse({"system_prompt": current_system_prompt})
+
+
+@app.post("/config/prompt")
+def set_prompt_config(config: PromptConfig) -> JSONResponse:
+    global current_system_prompt
+    new_prompt = (config.system_prompt or "").strip()
+    if not new_prompt:
+        return JSONResponse({"ok": False, "error": "system_prompt cannot be empty"}, status_code=400)
+    with prompt_lock:
+        current_system_prompt = new_prompt
+    push_event("config", {"message": "System prompt updated"})
+    return JSONResponse({"ok": True, "system_prompt": current_system_prompt})
 
 
 @app.get("/camera")

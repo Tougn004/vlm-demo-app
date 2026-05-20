@@ -52,6 +52,16 @@
       .pill { padding: 2px 8px; border-radius: 999px; font-size: 12px; }
       .pill.ok { background: rgba(34,197,94,0.2); color: #86efac; }
       .pill.bad { background: rgba(239,68,68,0.2); color: #fca5a5; }
+      textarea {
+        width: 100%;
+        min-height: 110px;
+        background: #020617;
+        color: var(--text);
+        border: 1px solid #334155;
+        border-radius: 10px;
+        padding: 10px;
+        font-family: Consolas, Monaco, monospace;
+      }
     </style>
   </head>
   <body>
@@ -68,6 +78,16 @@
 
       <h2>Events</h2>
       <div class="card" id="events"></div>
+
+      <h2>System Prompt</h2>
+      <div class="card">
+        <p class="muted">Used on every VLM poll. Save to apply immediately.</p>
+        <textarea id="prompt-box"></textarea>
+        <p>
+          <button id="save-prompt-btn">Save Prompt</button>
+          <span id="prompt-save-status" class="muted"></span>
+        </p>
+      </div>
     </div>
 
     <script>
@@ -75,6 +95,9 @@
       const statusPill = document.getElementById('status-pill');
       const statusText = document.getElementById('status-text');
       const notifBtn = document.getElementById('notif-btn');
+      const promptBox = document.getElementById('prompt-box');
+      const savePromptBtn = document.getElementById('save-prompt-btn');
+      const promptSaveStatus = document.getElementById('prompt-save-status');
 
       notifBtn.onclick = async () => {
         const permission = await Notification.requestPermission();
@@ -101,6 +124,25 @@
           updateStatus(true, 'Monitoring webcam...');
         }
       });
+      fetch('/config/prompt')
+        .then(r => r.json())
+        .then(cfg => { promptBox.value = cfg.system_prompt || ''; })
+        .catch(() => { promptSaveStatus.textContent = 'Failed to load current prompt'; });
+
+      savePromptBtn.onclick = async () => {
+        promptSaveStatus.textContent = 'Saving...';
+        const response = await fetch('/config/prompt', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ system_prompt: promptBox.value })
+        });
+        const body = await response.json();
+        if (!response.ok || !body.ok) {
+          promptSaveStatus.textContent = body.error || 'Failed to save prompt';
+          return;
+        }
+        promptSaveStatus.textContent = 'Saved. Will be used on next poll.';
+      };
 
       const source = new EventSource('/events');
 
