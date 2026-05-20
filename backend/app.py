@@ -47,6 +47,82 @@ class PromptConfig(BaseModel):
     system_prompt: str
 
 
+def normalize_model_response(raw_response: str) -> Dict[str, object]:
+    raw = (raw_response or "").strip()
+    if not raw:
+        return {
+            "person_detected": False,
+            "confidence": 0.0,
+            "summary": "",
+            "count": 0,
+            "raw_response": raw_response,
+        }
+
+    parsed_obj = None
+    try:
+        parsed_obj = json.loads(raw)
+    except Exception:
+        parsed_obj = raw
+
+    # If the model returns a bare numeric JSON value or plain numeric text.
+    if isinstance(parsed_obj, int) or (isinstance(parsed_obj, str) and parsed_obj.strip().isdigit()):
+        count = int(parsed_obj)
+        return {
+            "person_detected": count > 0,
+            "confidence": 1.0 if count > 0 else 0.0,
+            "summary": f"Detected {count} people",
+            "count": count,
+            "raw_response": raw_response,
+        }
+
+    if isinstance(parsed_obj, dict):
+        # Preferred explicit schema.
+        if "person_detected" in parsed_obj:
+            detected = bool(parsed_obj.get("person_detected", False))
+            confidence = float(parsed_obj.get("confidence", 1.0 if detected else 0.0))
+            summary = str(parsed_obj.get("summary", "") or "")
+            count_val = parsed_obj.get("count")
+            count = int(count_val) if isinstance(count_val, (int, float)) else (1 if detected else 0)
+            return {
+                "person_detected": detected,
+                "confidence": confidence,
+                "summary": summary,
+                "count": count,
+                "raw_response": raw_response,
+            }
+
+        # Count-based schema.
+        if "count" in parsed_obj:
+            try:
+                count = int(parsed_obj.get("count", 0))
+            except Exception:
+                count = 0
+            return {
+                "person_detected": count > 0,
+                "confidence": 1.0 if count > 0 else 0.0,
+                "summary": str(parsed_obj.get("summary", f"Detected {count} people")),
+                "count": count,
+                "raw_response": raw_response,
+            }
+
+        # Fallback for any unknown JSON object.
+        return {
+            "person_detected": False,
+            "confidence": 0.0,
+            "summary": str(parsed_obj.get("summary", "")),
+            "count": 0,
+            "raw_response": raw_response,
+        }
+
+    return {
+        "person_detected": False,
+        "confidence": 0.0,
+        "summary": str(parsed_obj),
+        "count": 0,
+        "raw_response": raw_response,
+    }
+
+
 def push_event(event_type: str, payload: Dict[str, object]) -> None:
     event_queue.append(
         {
@@ -151,13 +227,7 @@ def ask_vlm_person_present(jpeg_bytes: bytes) -> Dict[str, object]:
         data = response.json()
 
     raw_response = data.get("response", "{}")
-    parsed = json.loads(raw_response)
-
-    return {
-        "person_detected": bool(parsed.get("person_detected", False)),
-        "confidence": float(parsed.get("confidence", 0.0)),
-        "summary": str(parsed.get("summary", "")),
-    }
+    return normalize_model_response(raw_response)
 
 
 def detection_loop() -> None:
