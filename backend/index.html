@@ -84,6 +84,7 @@
       .pill { padding: 2px 8px; border-radius: 999px; font-size: 12px; }
       .pill.ok { background: rgba(34,197,94,0.2); color: #86efac; }
       .pill.bad { background: rgba(239,68,68,0.2); color: #fca5a5; }
+      .pill.mode { background: rgba(20,184,166,0.22); color: #99f6e4; margin-left: 8px; }
       textarea {
         width: 100%;
         min-height: 110px;
@@ -134,7 +135,7 @@
       <p class="muted">Reads USB webcam frames, queries local Ollama vision model, and triggers browser alerts when a person is detected.</p>
 
       <div class="card">
-        <p>Status: <span id="status-pill" class="pill">starting...</span></p>
+        <p>Status: <span id="status-pill" class="pill">starting...</span><span id="mode-pill" class="pill mode">mode:auto</span></p>
         <button id="notif-btn">Enable Browser Notifications</button>
         <div id="last-vlm-box" class="last-vlm-box">Last VLM Message: Waiting for first detection...</div>
         <div class="top-grid">
@@ -146,6 +147,16 @@
             <p>
               <label class="muted" for="preset-select">Prompt preset:</label>
               <select id="preset-select"></select>
+            </p>
+            <p>
+              <label class="muted" for="mode-select">Mode:</label>
+              <select id="mode-select">
+                <option value="auto">Auto</option>
+                <option value="detect">Detect</option>
+                <option value="count">Count</option>
+                <option value="activity">Activity</option>
+              </select>
+              <span id="mode-save-status" class="muted"></span>
             </p>
             <textarea id="prompt-box"></textarea>
             <p class="prompt-row">
@@ -182,6 +193,7 @@
       const eventsDiv = document.getElementById('events');
       const alertsDiv = document.getElementById('alerts');
       const statusPill = document.getElementById('status-pill');
+      const modePill = document.getElementById('mode-pill');
       const lastVlmBox = document.getElementById('last-vlm-box');
       const notifBtn = document.getElementById('notif-btn');
       const promptBox = document.getElementById('prompt-box');
@@ -191,6 +203,8 @@
       const countTrend = document.getElementById('count-trend');
       const cameraDiag = document.getElementById('camera-diag');
       const presetSelect = document.getElementById('preset-select');
+      const modeSelect = document.getElementById('mode-select');
+      const modeSaveStatus = document.getElementById('mode-save-status');
       const recentCounts = [];
 
       const promptPresets = {
@@ -252,7 +266,12 @@
         } else {
           updateStatus(true);
         }
+        modePill.textContent = `mode:${s.mode || 'auto'}`;
       });
+      fetch('/config/mode')
+        .then(r => r.json())
+        .then(cfg => { modeSelect.value = cfg.mode || 'auto'; })
+        .catch(() => { modeSaveStatus.textContent = 'Failed to load mode'; });
       fetch('/camera/diagnostics')
         .then(r => r.json())
         .then(d => {
@@ -273,6 +292,21 @@
         if (key && promptPresets[key]) {
           promptBox.value = promptPresets[key];
         }
+      };
+
+      modeSelect.onchange = async () => {
+        modeSaveStatus.textContent = 'Saving...';
+        const response = await fetch('/config/mode', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ mode: modeSelect.value })
+        });
+        const body = await response.json();
+        if (!response.ok || !body.ok) {
+          modeSaveStatus.textContent = body.error || 'Failed to save mode';
+          return;
+        }
+        modeSaveStatus.textContent = `Saved (${body.mode})`;
       };
 
       savePromptBtn.onclick = async () => {
@@ -301,6 +335,7 @@
         addEvent(txt);
         updateTrend(Number(p.count ?? (p.person_detected ? 1 : 0)));
         updateStatus(true);
+        modePill.textContent = `mode:${p.mode || 'auto'}`;
         setLastVlmMessage(p.raw_response || summary || txt);
       });
 

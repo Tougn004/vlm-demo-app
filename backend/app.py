@@ -55,6 +55,27 @@ class PromptConfig(BaseModel):
     system_prompt: str
 
 
+class ModeConfig(BaseModel):
+    mode: str
+
+
+VALID_MODES = {"auto", "detect", "count", "activity"}
+current_mode = "auto"
+
+
+def infer_mode(prompt: str, result: Dict[str, object]) -> str:
+    if current_mode in {"detect", "count", "activity"}:
+        return current_mode
+    prompt_l = (prompt or "").lower()
+    summary_l = str(result.get("summary", "")).lower()
+    raw_l = str(result.get("raw_response", "")).lower()
+    if "count" in prompt_l or "number of people" in prompt_l or "count" in raw_l:
+        return "count"
+    if "activity" in prompt_l or "action" in prompt_l or "activity" in summary_l:
+        return "activity"
+    return "detect"
+
+
 def normalize_model_response(raw_response: str) -> Dict[str, object]:
     raw = (raw_response or "").strip()
     if not raw:
@@ -297,9 +318,15 @@ def detection_loop() -> None:
                 time.sleep(0.2)
                 continue
             result = ask_vlm_person_present(jpeg)
+            with prompt_lock:
+                active_prompt = current_system_prompt
+            mode = infer_mode(active_prompt, result)
+            result["mode"] = mode
             status["last_check"] = time.strftime("%Y-%m-%d %H:%M:%S")
             status["last_result"] = result
             status["error"] = None
+            status["mode"] = mode
+            status["mode_setting"] = current_mode
             push_event("detection", result)
 
             if result.get("person_detected"):
@@ -392,6 +419,22 @@ def set_prompt_config(config: PromptConfig) -> JSONResponse:
         current_system_prompt = new_prompt
     push_event("config", {"message": "System prompt updated"})
     return JSONResponse({"ok": True, "system_prompt": current_system_prompt})
+
+
+@app.get("/config/mode")
+def get_mode_config() -> JSONResponse:
+    return JSONResponse({"mode": current_mode, "valid_modes": sorted(list(VALID_MODES))})
+
+
+@app.post("/config/mode")
+def set_mode_config(config: ModeConfig) -> JSONResponse:
+    global current_mode
+    mode = (config.mode or "").strip().lower()
+    if mode not in VALID_MODES:
+        return JSONResponse({"ok": False, "error": f"mode must be one of {sorted(list(VALID_MODES))}"}, status_code=400)
+    current_mode = mode
+    push_event("config", {"message": f"Mode updated to {mode}"})
+    return JSONResponse({"ok": True, "mode": current_mode})
 
 
 @app.get("/camera")
