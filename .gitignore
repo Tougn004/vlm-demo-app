@@ -63,3 +63,4 @@ __pycache__/
 .DS_Store
 .eslintcache
 .stylelintcache
+backend/snapshots/

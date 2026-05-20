@@ -4,6 +4,7 @@ import base64
 import glob
 import json
 import os
+from pathlib import Path
 import threading
 import time
 from collections import deque
@@ -20,6 +21,10 @@ OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "gemma3:4b")
 CAMERA_INDEX = int(os.getenv("CAMERA_INDEX", "0"))
 FALLBACK_CAMERA_INDEXES = [int(x) for x in os.getenv("FALLBACK_CAMERA_INDEXES", "1").split(",") if x.strip()]
 CHECK_INTERVAL_SECONDS = float(os.getenv("CHECK_INTERVAL_SECONDS", "5"))
+ALERT_COOLDOWN_SECONDS = float(os.getenv("ALERT_COOLDOWN_SECONDS", "20"))
+WEBHOOK_URL = os.getenv("WEBHOOK_URL", "").strip()
+SNAPSHOT_DIR = Path(os.getenv("SNAPSHOT_DIR", str(Path(__file__).parent / "snapshots")))
+SNAPSHOT_DIR.mkdir(parents=True, exist_ok=True)
 
 app = FastAPI(title="VLM Person Alert")
 
@@ -28,6 +33,7 @@ status: Dict[str, object] = {
     "last_check": None,
     "last_result": None,
     "error": None,
+    "alert_cooldown_seconds": ALERT_COOLDOWN_SECONDS,
 }
 
 event_queue: Deque[Dict[str, object]] = deque(maxlen=200)
@@ -35,6 +41,7 @@ latest_jpeg: Optional[bytes] = None
 frame_lock = threading.Lock()
 prompt_lock = threading.Lock()
 last_camera_error: Optional[str] = None
+last_alert_sent_at = 0.0
 
 DEFAULT_SYSTEM_PROMPT = (
     "You are a strict vision classifier. "
@@ -170,6 +177,30 @@ def discover_camera_indexes() -> List[int]:
     return ordered if ordered else preferred
 
 
+def discover_camera_device_paths() -> List[str]:
+    return sorted(glob.glob("/dev/video*"))
+
+
+def save_snapshot(jpeg_bytes: bytes) -> str:
+    filename = f"alert_{int(time.time())}.jpg"
+    filepath = SNAPSHOT_DIR / filename
+    filepath.write_bytes(jpeg_bytes)
+    return str(filepath)
+
+
+def send_webhook_alert(result: Dict[str, object], snapshot_path: str) -> None:
+    if not WEBHOOK_URL:
+        return
+    payload = {
+        "event": "person_alert",
+        "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "result": result,
+        "snapshot_path": snapshot_path,
+    }
+    with httpx.Client(timeout=10.0) as client:
+        client.post(WEBHOOK_URL, json=payload)
+
+
 def camera_capture_loop() -> None:
     global latest_jpeg, last_camera_error
     while status.get("running", True):
@@ -256,6 +287,7 @@ def ask_vlm_person_present(jpeg_bytes: bytes) -> Dict[str, object]:
 
 
 def detection_loop() -> None:
+    global last_alert_sent_at
     while status.get("running", True):
         try:
             with frame_lock:
@@ -271,7 +303,16 @@ def detection_loop() -> None:
             push_event("detection", result)
 
             if result.get("person_detected"):
-                push_event("alert", result)
+                now = time.time()
+                if (now - last_alert_sent_at) >= ALERT_COOLDOWN_SECONDS:
+                    snapshot_path = save_snapshot(jpeg)
+                    alert_payload = {**result, "snapshot_path": snapshot_path}
+                    push_event("alert", alert_payload)
+                    try:
+                        send_webhook_alert(alert_payload, snapshot_path)
+                    except Exception as webhook_exc:
+                        push_event("error", {"message": f"Webhook send failed: {webhook_exc}"})
+                    last_alert_sent_at = now
         except Exception as exc:  # pragma: no cover
             status["error"] = str(exc)
             push_event("error", {"message": str(exc)})
@@ -296,6 +337,26 @@ def index() -> str:
 @app.get("/status")
 def get_status() -> JSONResponse:
     return JSONResponse(status)
+
+
+@app.get("/camera/diagnostics")
+def camera_diagnostics() -> JSONResponse:
+    indexes = discover_camera_indexes()
+    diagnostics = []
+    for idx in indexes:
+        cap = cv2.VideoCapture(idx)
+        opened = cap.isOpened()
+        cap.release()
+        diagnostics.append({"index": idx, "openable": opened})
+    return JSONResponse(
+        {
+            "configured_index": CAMERA_INDEX,
+            "fallback_indexes": FALLBACK_CAMERA_INDEXES,
+            "device_paths": discover_camera_device_paths(),
+            "diagnostics": diagnostics,
+            "active_index": status.get("camera_index"),
+        }
+    )
 
 
 @app.get("/events")
@@ -339,6 +400,12 @@ def camera() -> StreamingResponse:
         mjpeg_frame_generator(),
         media_type="multipart/x-mixed-replace; boundary=frame",
     )
+
+
+@app.get("/snapshots")
+def list_snapshots() -> JSONResponse:
+    files = sorted(SNAPSHOT_DIR.glob("alert_*.jpg"), reverse=True)[:20]
+    return JSONResponse({"snapshots": [str(p) for p in files]})
 
 
 @app.post("/shutdown")

@@ -97,8 +97,32 @@
       .prompt-row {
         margin-top: 8px;
       }
+      .metrics-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+      }
+      .metric {
+        border: 1px solid #334155;
+        border-radius: 10px;
+        padding: 10px;
+        background: rgba(2, 6, 23, 0.55);
+      }
+      #camera-diag {
+        white-space: pre-wrap;
+      }
+      select {
+        background: #020617;
+        color: var(--text);
+        border: 1px solid #334155;
+        border-radius: 8px;
+        padding: 6px;
+      }
       @media (max-width: 860px) {
         .top-grid {
+          grid-template-columns: 1fr;
+        }
+        .metrics-grid {
           grid-template-columns: 1fr;
         }
       }
@@ -119,6 +143,10 @@
           </div>
           <div>
             <p class="muted">System prompt used on every poll:</p>
+            <p>
+              <label class="muted" for="preset-select">Prompt preset:</label>
+              <select id="preset-select"></select>
+            </p>
             <textarea id="prompt-box"></textarea>
             <p class="prompt-row">
               <button id="save-prompt-btn">Save Prompt</button>
@@ -130,6 +158,23 @@
 
       <h2>Alerts</h2>
       <div class="card" id="alerts"></div>
+
+      <h2>Live Metrics</h2>
+      <div class="card metrics-grid">
+        <div class="metric">
+          <div class="muted">Latest Count</div>
+          <div id="latest-count" style="font-size: 28px; font-weight: 700;">-</div>
+        </div>
+        <div class="metric">
+          <div class="muted">Last 10 Polls Trend</div>
+          <div id="count-trend" style="font-family: Consolas, monospace;">-</div>
+        </div>
+      </div>
+
+      <h2>Camera Diagnostics</h2>
+      <div class="card">
+        <div id="camera-diag" class="muted">Loading diagnostics...</div>
+      </div>
 
       <h2>Events</h2>
       <div class="card" id="events"></div>
@@ -144,6 +189,17 @@
       const promptBox = document.getElementById('prompt-box');
       const savePromptBtn = document.getElementById('save-prompt-btn');
       const promptSaveStatus = document.getElementById('prompt-save-status');
+      const latestCount = document.getElementById('latest-count');
+      const countTrend = document.getElementById('count-trend');
+      const cameraDiag = document.getElementById('camera-diag');
+      const presetSelect = document.getElementById('preset-select');
+      const recentCounts = [];
+
+      const promptPresets = {
+        person_detect: "You are a strict vision classifier. Answer ONLY valid JSON with fields: person_detected (boolean), confidence (0-1 number), summary (string). Detect if at least one person is visible in this image.",
+        people_count: "Count number of people in view. Return ONLY JSON with fields: count (integer), summary (string).",
+        simple_activity: "Classify primary human activity in image. Return ONLY JSON with fields: person_detected (boolean), confidence (0-1 number), summary (string), activity (string)."
+      };
 
       notifBtn.onclick = async () => {
         const permission = await Notification.requestPermission();
@@ -162,6 +218,22 @@
         div.className = 'alert-event ' + level;
         div.textContent = text;
         alertsDiv.prepend(div);
+      }
+
+      function updateTrend(count) {
+        recentCounts.push(Number.isFinite(count) ? count : 0);
+        if (recentCounts.length > 10) recentCounts.shift();
+        latestCount.textContent = String(recentCounts[recentCounts.length - 1] ?? 0);
+        countTrend.textContent = recentCounts.map(c => String(c)).join(" -> ");
+      }
+
+      function loadPresets() {
+        presetSelect.innerHTML = `
+          <option value="">Custom prompt</option>
+          <option value="person_detect">Person Detect</option>
+          <option value="people_count">People Count</option>
+          <option value="simple_activity">Simple Activity</option>
+        `;
       }
 
       function updateStatus(healthy) {
@@ -183,10 +255,27 @@
           updateStatus(true);
         }
       });
+      fetch('/camera/diagnostics')
+        .then(r => r.json())
+        .then(d => {
+          const line1 = `Configured index: ${d.configured_index} | Active index: ${d.active_index}`;
+          const line2 = `Devices: ${d.device_paths.join(', ') || 'none'}`;
+          const line3 = `Openable: ${d.diagnostics.map(x => `${x.index}:${x.openable ? 'yes' : 'no'}`).join(' | ') || 'none'}`;
+          cameraDiag.textContent = `${line1}\n${line2}\n${line3}`;
+        })
+        .catch(() => { cameraDiag.textContent = 'Failed to load camera diagnostics'; });
       fetch('/config/prompt')
         .then(r => r.json())
         .then(cfg => { promptBox.value = cfg.system_prompt || ''; })
         .catch(() => { promptSaveStatus.textContent = 'Failed to load current prompt'; });
+      loadPresets();
+
+      presetSelect.onchange = () => {
+        const key = presetSelect.value;
+        if (key && promptPresets[key]) {
+          promptBox.value = promptPresets[key];
+        }
+      };
 
       savePromptBtn.onclick = async () => {
         promptSaveStatus.textContent = 'Saving...';
@@ -212,6 +301,7 @@
         const countText = (p.count !== undefined && p.count !== null) ? ` count=${p.count}` : '';
         const txt = `[${e.ts}] Detection: person_detected=${p.person_detected} confidence=${p.confidence}${countText} summary=${summary}`;
         addEvent(txt);
+        updateTrend(Number(p.count ?? (p.person_detected ? 1 : 0)));
         updateStatus(true);
         setLastVlmMessage(p.raw_response || summary || txt);
       });
@@ -219,7 +309,8 @@
       source.addEventListener('alert', (evt) => {
         const e = JSON.parse(evt.data);
         const p = e.payload;
-        const txt = `[${e.ts}] ALERT: Person detected (confidence ${p.confidence})`;
+        const snapshot = p.snapshot_path ? ` snapshot=${p.snapshot_path}` : '';
+        const txt = `[${e.ts}] ALERT: Person detected (confidence ${p.confidence})${snapshot}`;
         addEvent(txt);
         addAlert(txt, 'alert');
         if (Notification.permission === 'granted') {
