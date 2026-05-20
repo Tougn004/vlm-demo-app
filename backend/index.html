@@ -33,6 +33,13 @@
       }
       .muted { color: var(--muted); }
       .event { border-top: 1px solid #334155; padding: 10px 0; }
+      .camera {
+        width: 100%;
+        border-radius: 10px;
+        border: 1px solid #334155;
+        margin-top: 12px;
+        background: #020617;
+      }
       button {
         background: #0ea5e9;
         color: #001018;
@@ -56,6 +63,7 @@
         <p>Status: <span id="status-pill" class="pill">starting...</span></p>
         <p id="status-text" class="muted">Waiting for first detection...</p>
         <button id="notif-btn">Enable Browser Notifications</button>
+        <img class="camera" id="camera-feed" src="/camera" alt="Live webcam feed" />
       </div>
 
       <h2>Events</h2>

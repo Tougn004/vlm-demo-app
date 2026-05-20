@@ -56,6 +56,29 @@ def capture_frame(camera_index: int) -> bytes:
     return buffer.tobytes()
 
 
+def mjpeg_frame_generator():
+    cap = cv2.VideoCapture(CAMERA_INDEX)
+    if not cap.isOpened():
+        raise RuntimeError(f"Could not open camera index {CAMERA_INDEX}")
+    try:
+        while True:
+            ok, frame = cap.read()
+            if not ok or frame is None:
+                time.sleep(0.05)
+                continue
+            ok, buffer = cv2.imencode(".jpg", frame)
+            if not ok:
+                continue
+            jpg_bytes = buffer.tobytes()
+            yield (
+                b"--frame\r\n"
+                b"Content-Type: image/jpeg\r\n\r\n" + jpg_bytes + b"\r\n"
+            )
+            time.sleep(0.06)
+    finally:
+        cap.release()
+
+
 def ask_vlm_person_present(jpeg_bytes: bytes) -> Dict[str, object]:
     prompt = (
         "You are a strict vision classifier. "
@@ -139,6 +162,14 @@ async def events() -> StreamingResponse:
             await asyncio.sleep(1)
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+
+@app.get("/camera")
+def camera() -> StreamingResponse:
+    return StreamingResponse(
+        mjpeg_frame_generator(),
+        media_type="multipart/x-mixed-replace; boundary=frame",
+    )
 
 
 @app.post("/shutdown")
