@@ -39,6 +39,23 @@
       }
       .muted { color: var(--muted); }
       .event { border-top: 1px solid #334155; padding: 10px 0; }
+      .alert-event {
+        border-radius: 10px;
+        padding: 10px 12px;
+        margin-bottom: 10px;
+        border: 1px solid transparent;
+        font-weight: 600;
+      }
+      .alert-event.alert {
+        background: rgba(239, 68, 68, 0.2);
+        border-color: rgba(239, 68, 68, 0.55);
+        color: #fecaca;
+      }
+      .alert-event.error {
+        background: rgba(245, 158, 11, 0.22);
+        border-color: rgba(245, 158, 11, 0.6);
+        color: #fde68a;
+      }
       .camera {
         width: 100%;
         border-radius: 10px;
@@ -101,12 +118,16 @@
         </div>
       </div>
 
+      <h2>Alerts</h2>
+      <div class="card" id="alerts"></div>
+
       <h2>Events</h2>
       <div class="card" id="events"></div>
     </div>
 
     <script>
       const eventsDiv = document.getElementById('events');
+      const alertsDiv = document.getElementById('alerts');
       const statusPill = document.getElementById('status-pill');
       const statusText = document.getElementById('status-text');
       const notifBtn = document.getElementById('notif-btn');
@@ -124,6 +145,13 @@
         div.className = 'event';
         div.textContent = text;
         eventsDiv.prepend(div);
+      }
+
+      function addAlert(text, level) {
+        const div = document.createElement('div');
+        div.className = 'alert-event ' + level;
+        div.textContent = text;
+        alertsDiv.prepend(div);
       }
 
       function updateStatus(healthy, message) {
@@ -174,6 +202,7 @@
         const p = e.payload;
         const txt = `[${e.ts}] ALERT: Person detected (confidence ${p.confidence})`;
         addEvent(txt);
+        addAlert(txt, 'alert');
         if (Notification.permission === 'granted') {
           new Notification('VLM Alert', { body: txt });
         }
@@ -181,7 +210,9 @@
 
       source.addEventListener('error', (evt) => {
         const e = JSON.parse(evt.data);
-        addEvent(`[${e.ts}] ERROR: ${e.payload.message}`);
+        const txt = `[${e.ts}] ERROR: ${e.payload.message}`;
+        addEvent(txt);
+        addAlert(txt, 'error');
         updateStatus(false, e.payload.message);
       });
     </script>
