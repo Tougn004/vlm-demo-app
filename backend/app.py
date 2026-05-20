@@ -38,12 +38,10 @@ status: Dict[str, object] = {
 
 event_queue: Deque[Dict[str, object]] = deque(maxlen=200)
 latest_jpeg: Optional[bytes] = None
-latest_annotated_jpeg: Optional[bytes] = None
 frame_lock = threading.Lock()
 prompt_lock = threading.Lock()
 last_camera_error: Optional[str] = None
 last_alert_sent_at = 0.0
-last_tracking_boxes: List[List[int]] = []
 
 DEFAULT_SYSTEM_PROMPT = (
     "You are a strict vision classifier. "
@@ -225,10 +223,7 @@ def send_webhook_alert(result: Dict[str, object], snapshot_path: str) -> None:
 
 
 def camera_capture_loop() -> None:
-    global latest_jpeg, latest_annotated_jpeg, last_camera_error, last_tracking_boxes
-    hog = cv2.HOGDescriptor()
-    hog.setSVMDetector(cv2.HOGDescriptor_getDefaultPeopleDetector())
-    frame_count = 0
+    global latest_jpeg, last_camera_error
     while status.get("running", True):
         indexes = discover_camera_indexes()
         cap = None
@@ -264,44 +259,11 @@ def camera_capture_loop() -> None:
                         push_event("error", {"message": msg})
                         last_camera_error = msg
                     break
-                frame_count += 1
-
-                # Run lightweight local tracking every few frames.
-                if frame_count % 5 == 0:
-                    rects, _weights = hog.detectMultiScale(
-                        frame,
-                        winStride=(8, 8),
-                        padding=(8, 8),
-                        scale=1.05,
-                    )
-                    last_tracking_boxes = [[int(x), int(y), int(w), int(h)] for (x, y, w, h) in rects]
-                    status["tracking_method"] = "opencv_hog_people_detector"
-                    status["tracked_people"] = len(last_tracking_boxes)
-
-                annotated = frame.copy()
-                for (x, y, w, h) in last_tracking_boxes:
-                    cv2.rectangle(annotated, (x, y), (x + w, y + h), (0, 220, 255), 2)
-                cv2.rectangle(annotated, (8, 8), (420, 46), (15, 23, 42), -1)
-                cv2.putText(
-                    annotated,
-                    f"Tracking: OpenCV HOG | boxes={len(last_tracking_boxes)}",
-                    (14, 32),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.55,
-                    (240, 245, 255),
-                    1,
-                    cv2.LINE_AA,
-                )
-
                 ok, buffer = cv2.imencode(".jpg", frame)
                 if not ok:
                     continue
-                ok_annotated, buffer_annotated = cv2.imencode(".jpg", annotated)
-                if not ok_annotated:
-                    continue
                 with frame_lock:
                     latest_jpeg = buffer.tobytes()
-                    latest_annotated_jpeg = buffer_annotated.tobytes()
         finally:
             cap.release()
             time.sleep(0.2)
@@ -311,7 +273,7 @@ def mjpeg_frame_generator():
     while status.get("running", True):
         frame = None
         with frame_lock:
-            frame = latest_annotated_jpeg or latest_jpeg
+            frame = latest_jpeg
         if frame is None:
             time.sleep(0.05)
             continue
