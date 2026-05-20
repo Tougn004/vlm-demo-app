@@ -34,7 +34,6 @@ status: Dict[str, object] = {
     "last_result": None,
     "error": None,
     "alert_cooldown_seconds": ALERT_COOLDOWN_SECONDS,
-    "visionary_mode": "rgb",
 }
 
 event_queue: Deque[Dict[str, object]] = deque(maxlen=200)
@@ -62,14 +61,6 @@ class ModeConfig(BaseModel):
 
 VALID_MODES = {"auto", "detect", "count", "activity"}
 current_mode = "auto"
-
-
-class VisionaryConfig(BaseModel):
-    visionary: str
-
-
-VALID_VISIONARY_MODES = {"rgb", "inferred"}
-current_visionary_mode = "rgb"
 
 
 def infer_mode(prompt: str, result: Dict[str, object]) -> str:
@@ -336,7 +327,6 @@ def detection_loop() -> None:
             status["error"] = None
             status["mode"] = mode
             status["mode_setting"] = current_mode
-            status["visionary_mode"] = current_visionary_mode
             push_event("detection", result)
 
             if result.get("person_detected"):
@@ -445,28 +435,6 @@ def set_mode_config(config: ModeConfig) -> JSONResponse:
     current_mode = mode
     push_event("config", {"message": f"Mode updated to {mode}"})
     return JSONResponse({"ok": True, "mode": current_mode})
-
-
-@app.get("/config/visionary")
-def get_visionary_config() -> JSONResponse:
-    return JSONResponse(
-        {"visionary": current_visionary_mode, "valid_visionary_modes": sorted(list(VALID_VISIONARY_MODES))}
-    )
-
-
-@app.post("/config/visionary")
-def set_visionary_config(config: VisionaryConfig) -> JSONResponse:
-    global current_visionary_mode
-    visionary = (config.visionary or "").strip().lower()
-    if visionary not in VALID_VISIONARY_MODES:
-        return JSONResponse(
-            {"ok": False, "error": f"visionary must be one of {sorted(list(VALID_VISIONARY_MODES))}"},
-            status_code=400,
-        )
-    current_visionary_mode = visionary
-    status["visionary_mode"] = current_visionary_mode
-    push_event("config", {"message": f"Visionary updated to {visionary}"})
-    return JSONResponse({"ok": True, "visionary": current_visionary_mode})
 
 
 @app.get("/camera")
