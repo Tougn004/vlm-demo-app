@@ -369,19 +369,14 @@ def get_status() -> JSONResponse:
 @app.get("/camera/diagnostics")
 def camera_diagnostics() -> JSONResponse:
     indexes = discover_camera_indexes()
-    diagnostics = []
-    for idx in indexes:
-        cap = cv2.VideoCapture(idx)
-        opened = cap.isOpened()
-        cap.release()
-        diagnostics.append({"index": idx, "openable": opened})
     return JSONResponse(
         {
             "configured_index": CAMERA_INDEX,
             "fallback_indexes": FALLBACK_CAMERA_INDEXES,
             "device_paths": discover_camera_device_paths(),
-            "diagnostics": diagnostics,
+            "diagnostics": [{"index": idx, "openable": None} for idx in indexes],
             "active_index": status.get("camera_index"),
+            "last_error": status.get("error"),
         }
     )
 
