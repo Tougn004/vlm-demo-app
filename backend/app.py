@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import glob
 import json
 import os
 import threading
@@ -32,6 +33,7 @@ event_queue: Deque[Dict[str, object]] = deque(maxlen=200)
 latest_jpeg: Optional[bytes] = None
 frame_lock = threading.Lock()
 prompt_lock = threading.Lock()
+last_camera_error: Optional[str] = None
 
 DEFAULT_SYSTEM_PROMPT = (
     "You are a strict vision classifier. "
@@ -56,10 +58,21 @@ def push_event(event_type: str, payload: Dict[str, object]) -> None:
     )
 
 
+def discover_camera_indexes() -> List[int]:
+    discovered = []
+    for path in sorted(glob.glob("/dev/video*")):
+        suffix = path.replace("/dev/video", "")
+        if suffix.isdigit():
+            discovered.append(int(suffix))
+    preferred = [CAMERA_INDEX] + [idx for idx in FALLBACK_CAMERA_INDEXES if idx != CAMERA_INDEX]
+    ordered = preferred + [idx for idx in discovered if idx not in preferred]
+    return ordered if ordered else preferred
+
+
 def camera_capture_loop() -> None:
-    global latest_jpeg
-    indexes = [CAMERA_INDEX] + [idx for idx in FALLBACK_CAMERA_INDEXES if idx != CAMERA_INDEX]
+    global latest_jpeg, last_camera_error
     while status.get("running", True):
+        indexes = discover_camera_indexes()
         cap = None
         chosen_index = None
         for idx in indexes:
@@ -71,20 +84,27 @@ def camera_capture_loop() -> None:
             test_cap.release()
 
         if cap is None:
-            status["error"] = f"Could not open camera indexes: {indexes}"
-            push_event("error", {"message": status["error"]})
+            msg = f"Could not open camera indexes: {indexes}"
+            status["error"] = msg
+            if last_camera_error != msg:
+                push_event("error", {"message": msg})
+                last_camera_error = msg
             time.sleep(2)
             continue
 
         status["camera_index"] = chosen_index
         status["error"] = None
+        last_camera_error = None
 
         try:
             while status.get("running", True):
                 ok, frame = cap.read()
                 if not ok or frame is None:
-                    status["error"] = f"Camera read failed on index {chosen_index}, retrying"
-                    push_event("error", {"message": status["error"]})
+                    msg = f"Camera read failed on index {chosen_index}, retrying"
+                    status["error"] = msg
+                    if last_camera_error != msg:
+                        push_event("error", {"message": msg})
+                        last_camera_error = msg
                     break
                 ok, buffer = cv2.imencode(".jpg", frame)
                 if not ok:

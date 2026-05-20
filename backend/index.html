@@ -31,13 +31,18 @@
         border-radius: 14px;
         padding: 16px;
       }
+      .top-grid {
+        display: grid;
+        grid-template-columns: 1.2fr 1fr;
+        gap: 14px;
+        margin-top: 12px;
+      }
       .muted { color: var(--muted); }
       .event { border-top: 1px solid #334155; padding: 10px 0; }
       .camera {
         width: 100%;
         border-radius: 10px;
-        border: 1px solid #334155;
-        margin-top: 12px;
+        border: 1px solid #334155;        
         background: #020617;
       }
       button {
@@ -62,6 +67,14 @@
         padding: 10px;
         font-family: Consolas, Monaco, monospace;
       }
+      .prompt-row {
+        margin-top: 8px;
+      }
+      @media (max-width: 860px) {
+        .top-grid {
+          grid-template-columns: 1fr;
+        }
+      }
     </style>
   </head>
   <body>
@@ -73,21 +86,23 @@
         <p>Status: <span id="status-pill" class="pill">starting...</span></p>
         <p id="status-text" class="muted">Waiting for first detection...</p>
         <button id="notif-btn">Enable Browser Notifications</button>
-        <img class="camera" id="camera-feed" src="/camera" alt="Live webcam feed" />
+        <div class="top-grid">
+          <div>
+            <img class="camera" id="camera-feed" src="/camera" alt="Live webcam feed" />
+          </div>
+          <div>
+            <p class="muted">System prompt used on every poll:</p>
+            <textarea id="prompt-box"></textarea>
+            <p class="prompt-row">
+              <button id="save-prompt-btn">Save Prompt</button>
+              <span id="prompt-save-status" class="muted"></span>
+            </p>
+          </div>
+        </div>
       </div>
 
       <h2>Events</h2>
       <div class="card" id="events"></div>
-
-      <h2>System Prompt</h2>
-      <div class="card">
-        <p class="muted">Used on every VLM poll. Save to apply immediately.</p>
-        <textarea id="prompt-box"></textarea>
-        <p>
-          <button id="save-prompt-btn">Save Prompt</button>
-          <span id="prompt-save-status" class="muted"></span>
-        </p>
-      </div>
     </div>
 
     <script>
