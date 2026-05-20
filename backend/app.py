@@ -62,7 +62,24 @@ def normalize_model_response(raw_response: str) -> Dict[str, object]:
     try:
         parsed_obj = json.loads(raw)
     except Exception:
-        parsed_obj = raw
+        # Try to recover a JSON object/array from mixed text output.
+        start_obj = raw.find("{")
+        end_obj = raw.rfind("}")
+        start_arr = raw.find("[")
+        end_arr = raw.rfind("]")
+        candidate = None
+        if start_obj != -1 and end_obj != -1 and end_obj > start_obj:
+            candidate = raw[start_obj : end_obj + 1]
+        elif start_arr != -1 and end_arr != -1 and end_arr > start_arr:
+            candidate = raw[start_arr : end_arr + 1]
+
+        if candidate:
+            try:
+                parsed_obj = json.loads(candidate)
+            except Exception:
+                parsed_obj = raw
+        else:
+            parsed_obj = raw
 
     # If the model returns a bare numeric JSON value or plain numeric text.
     if isinstance(parsed_obj, int) or (isinstance(parsed_obj, str) and parsed_obj.strip().isdigit()):
